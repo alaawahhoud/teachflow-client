@@ -29,12 +29,42 @@ const handleSignIn = async (e) => {
     const payload = { password };
     if (id.includes('@')) payload.email = id; else payload.username = id;
 
-    const res = await fetch(`API/auth/login`
-, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+// أعلى الملف (لو مو موجود)
+const API_BASE =
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) ||
+  process.env.REACT_APP_API_URL ||
+  "/api";
+
+// داخل دالة الـ submit (بدّلِي البلوك القديم بهيدا)
+async function handleSubmit(e) {
+  e.preventDefault();
+  setError("");
+  setLoading(true);
+  try {
+    const res = await fetch(`${API_BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }), // عدّلي الأسماء إذا حقولك اسمها غير
     });
+
+    if (res.status === 401) {
+      setError("Invalid credentials");
+      return;
+    }
+    if (!res.ok) {
+      setError(`Login failed (HTTP ${res.status})`);
+      return;
+    }
+
+    const data = await res.json(); // { token, user ... } حسب سيرفرك
+    // TODO: خزّني التوكن/اليوزر واعملي navigate("/Dashboard") مثلاً
+  } catch (err) {
+    setError("Network error");
+  } finally {
+    setLoading(false);
+  }
+}
+
 
     let data = {};
     try { data = await res.json(); } catch {}
