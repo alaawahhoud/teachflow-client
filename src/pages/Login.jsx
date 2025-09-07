@@ -4,7 +4,10 @@ import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { FaEye, FaEyeSlash } from 'react-icons/fa';
 
-const API_BASE = import.meta?.env?.VITE_API_URL || "http:/api";
+const API_BASE =
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) ||
+  (typeof process !== "undefined" && process.env?.REACT_APP_API_URL) ||
+  "/api"; // عبر vercel rewrites
 
 const Login = () => {
   const navigate = useNavigate();
@@ -44,27 +47,49 @@ async function handleSubmit(e) {
     const res = await fetch(`${API_BASE}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }), // عدّلي الأسماء إذا حقولك اسمها غير
+      body: JSON.stringify({ username, password }), // غيّري الأسماء إذا عندك حقول مختلفة
     });
 
-    if (res.status === 401) {
-      setError("Invalid credentials");
-      return;
-    }
+    // لو الاستجابة مش OK، اعرضي الرسالة بدل ما يوقع JSON.parse ويعمل "Network error"
     if (!res.ok) {
-      setError(`Login failed (HTTP ${res.status})`);
+      const ct = res.headers.get("content-type") || "";
+      const msg = ct.includes("application/json")
+        ? (await res.json()).message || `Login failed (HTTP ${res.status})`
+        : `${await res.text()}`.slice(0, 200) || `Login failed (HTTP ${res.status})`;
+      setError(msg);
       return;
     }
 
-    const data = await res.json(); // { token, user ... } حسب سيرفرك
-    // TODO: خزّني التوكن/اليوزر واعملي navigate("/Dashboard") مثلاً
+    // OK → JSON فعلي
+    const data = await res.json(); // { ok, user, token? }
+    if (!data?.ok) {
+      setError(data?.message || "Login failed");
+      return;
+    }
+
+   if (data?.ok) {
+  // إذا السيرفر بيرجع توكن، خزّنيه
+  if (data.token) {
+    localStorage.setItem("token", data.token);
+  }
+  // خزّنّي بيانات اليوزر لنعرف إنو مسجّل دخول
+  localStorage.setItem("user", JSON.stringify(data.user || {}));
+  // روّحي عالدashboard
+  navigate("/dashboard"); // بدّليها لـ "/dashboard" إذا هيدا مسارِك
+  return;
+}
+
+// إذا ok=false
+setError(data?.message || "Login failed");
+
   } catch (err) {
-    setError("Network error");
+    // ما منذكر بورت 4000 أبداً أونلاين
+    setError("Network error. Please try again.");
+    console.error("login error:", err);
   } finally {
     setLoading(false);
   }
 }
-
 
     let data = {};
     try { data = await res.json(); } catch {}
