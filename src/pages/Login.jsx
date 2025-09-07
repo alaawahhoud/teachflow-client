@@ -4,7 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { FaEye, FaEyeSlash } from 'react-icons/fa';
 
-const API_BASE = import.meta?.env?.VITE_API_URL || "http://localhost:4000/api";
+const API_BASE = import.meta?.env?.VITE_API_URL || "http:/api";
 
 const Login = () => {
   const navigate = useNavigate();
