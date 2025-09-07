@@ -1,113 +1,66 @@
 // src/pages/Login.jsx
-import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
-import { FaEye, FaEyeSlash } from 'react-icons/fa';
+import React, { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { motion } from "framer-motion";
+import { FaEye, FaEyeSlash } from "react-icons/fa";
 
+// ✅ قاعدة الـ API: بتاخد من ENV وإلا بتستعمل /api (للـ rewrites)
 const API_BASE =
   (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) ||
   (typeof process !== "undefined" && process.env?.REACT_APP_API_URL) ||
-  "/api"; // عبر vercel rewrites
+  "/api";
 
 const Login = () => {
   const navigate = useNavigate();
 
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [errorMsg, setErrorMsg] = useState('');
+  const [errorMsg, setErrorMsg] = useState("");
   const [loading, setLoading] = useState(false);
 
-const handleSignIn = async (e) => {
-  e.preventDefault();
-  setErrorMsg('');
-  if (!email || !password) {
-    setErrorMsg('Email/username and password are required.');
-    return;
-  }
+  const handleSignIn = async (e) => {
+    e.preventDefault();
+    setErrorMsg("");
 
-  setLoading(true);
-  try {
-    const id = email.trim();
-    const payload = { password };
-    if (id.includes('@')) payload.email = id; else payload.username = id;
+    if (!email || !password) {
+      setErrorMsg("Email/username and password are required.");
+      return;
+    }
 
-// أعلى الملف (لو مو موجود)
-const API_BASE =
-  (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) ||
-  process.env.REACT_APP_API_URL ||
-  "/api";
+    setLoading(true);
+    try {
+      // حضّري البيلود: إذا فيه @ استعملي email، غير هيك username
+      const id = email.trim();
+      const payload = { password };
+      if (id.includes("@")) payload.email = id;
+      else payload.username = id;
 
-// داخل دالة الـ submit (بدّلِي البلوك القديم بهيدا)
-async function handleSubmit(e) {
-  e.preventDefault();
-  setError("");
-  setLoading(true);
-  try {
-    const res = await fetch(`${API_BASE}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }), // غيّري الأسماء إذا عندك حقول مختلفة
-    });
+      const res = await fetch(`${API_BASE}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
 
-    // لو الاستجابة مش OK، اعرضي الرسالة بدل ما يوقع JSON.parse ويعمل "Network error"
-    if (!res.ok) {
       const ct = res.headers.get("content-type") || "";
-      const msg = ct.includes("application/json")
-        ? (await res.json()).message || `Login failed (HTTP ${res.status})`
-        : `${await res.text()}`.slice(0, 200) || `Login failed (HTTP ${res.status})`;
-      setError(msg);
-      return;
+      const body = ct.includes("application/json") ? await res.json() : { message: await res.text() };
+
+      if (!res.ok || body?.ok === false) {
+        setErrorMsg(body?.message || `Login failed (HTTP ${res.status}).`);
+        return;
+      }
+
+      // نجاح
+      if (body?.token) localStorage.setItem("tf_token", body.token);
+      if (body?.user) localStorage.setItem("tf_user", JSON.stringify(body.user));
+      navigate("/dashboard"); // بدّلي المسار إذا لزم
+    } catch (err) {
+      console.error("login error:", err);
+      setErrorMsg("Network error. Please try again.");
+    } finally {
+      setLoading(false);
     }
-
-    // OK → JSON فعلي
-    const data = await res.json(); // { ok, user, token? }
-    if (!data?.ok) {
-      setError(data?.message || "Login failed");
-      return;
-    }
-
-   if (data?.ok) {
-  // إذا السيرفر بيرجع توكن، خزّنيه
-  if (data.token) {
-    localStorage.setItem("token", data.token);
-  }
-  // خزّنّي بيانات اليوزر لنعرف إنو مسجّل دخول
-  localStorage.setItem("user", JSON.stringify(data.user || {}));
-  // روّحي عالدashboard
-  navigate("/dashboard"); // بدّليها لـ "/dashboard" إذا هيدا مسارِك
-  return;
-}
-
-// إذا ok=false
-setError(data?.message || "Login failed");
-
-  } catch (err) {
-    // ما منذكر بورت 4000 أبداً أونلاين
-    setError("Network error. Please try again.");
-    console.error("login error:", err);
-  } finally {
-    setLoading(false);
-  }
-}
-
-    let data = {};
-    try { data = await res.json(); } catch {}
-
-    if (!res.ok) {
-      setErrorMsg(data?.message || `Login failed (HTTP ${res.status}).`);
-      return;
-    }
-
-    localStorage.setItem('tf_token', data.token);
-    localStorage.setItem('tf_user', JSON.stringify(data.user));
-    navigate('/dashboard');
-  } catch (err) {
-    setErrorMsg('Network error. Check API URL/port (should be 4000).');
-  } finally {
-    setLoading(false);
-  }
-};
+  };
 
   return (
     <div className="relative h-screen w-full bg-[#7ABCD2]/20 flex items-center justify-start overflow-hidden">
@@ -128,44 +81,33 @@ setError(data?.message || "Login failed");
         transition={{ duration: 0.6 }}
         className="relative z-10 bg-white px-8 py-10 rounded-xl shadow-xl w-full max-w-sm mx-6 ml-40"
       >
-        <Link
-          to="/"
-          className="text-blue-600 text-sm hover:underline mb-6 inline-block"
-        >
+        <Link to="/" className="text-blue-600 text-sm hover:underline mb-6 inline-block">
           ← Back to Home
         </Link>
 
         <div className="text-center mb-6">
-          <img
-            src="/logo.png"
-            alt="TeachFlow Logo"
-            className="w-12 h-12 mx-auto mb-3"
-          />
+          <img src="/logo.png" alt="TeachFlow Logo" className="w-12 h-12 mx-auto mb-3" />
           <h1 className="text-2xl font-bold text-gray-800">TeachFlow</h1>
           <p className="text-gray-500 text-sm">School Management System</p>
         </div>
 
         <form onSubmit={handleSignIn}>
           <div className="mb-4">
-            <label className="block text-sm font-semibold text-gray-600 mb-1">
-  Email or Username
-</label>
-<input
-  type="text"
-  value={email}
-  onChange={(e) => setEmail(e.target.value)}
-  className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring focus:ring-blue-200"
-  placeholder="you@teachflow.local or admin"
-/>
-
+            <label className="block text-sm font-semibold text-gray-600 mb-1">Email or Username</label>
+            <input
+              type="text"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring focus:ring-blue-200"
+              placeholder="you@teachflow.local or admin"
+              autoComplete="username"
+            />
           </div>
 
           <div className="mb-2 relative">
-            <label className="block text-sm font-semibold text-gray-600 mb-1">
-              Password
-            </label>
+            <label className="block text-sm font-semibold text-gray-600 mb-1">Password</label>
             <input
-              type={showPassword ? 'text' : 'password'}
+              type={showPassword ? "text" : "password"}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring focus:ring-blue-200"
@@ -176,7 +118,7 @@ setError(data?.message || "Login failed");
               type="button"
               className="absolute top-9 right-3 text-gray-500"
               onClick={() => setShowPassword(!showPassword)}
-              aria-label={showPassword ? 'Hide password' : 'Show password'}
+              aria-label={showPassword ? "Hide password" : "Show password"}
             >
               {showPassword ? <FaEyeSlash /> : <FaEye />}
             </button>
@@ -211,14 +153,7 @@ setError(data?.message || "Login failed");
                   fill="none"
                   viewBox="0 0 24 24"
                 >
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  />
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path
                     className="opacity-75"
                     fill="currentColor"
@@ -228,7 +163,7 @@ setError(data?.message || "Login failed");
                 Signing In...
               </>
             ) : (
-              'Sign In'
+              "Sign In"
             )}
           </button>
         </form>
