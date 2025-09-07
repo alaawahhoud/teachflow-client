@@ -5,9 +5,9 @@ import { useLocation, useNavigate, useParams } from "react-router-dom";
 
 /* ===================== API BASE ===================== */
 const API_BASE =
-  (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_URL) ||
-  process.env.REACT_APP_API_URL ||
-  "http://localhost:4000/api";
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) ||
+  (typeof process !== "undefined" && process.env?.REACT_APP_API_URL) ||
+  "/api";
 
 /* ===================== Storage & Token helpers ===================== */
 const readJSON = (k) => {
@@ -18,17 +18,14 @@ const readStr = (k) => (localStorage.getItem(k) || sessionStorage.getItem(k) || 
 
 /** رجّع كل الأشكال المحتملة للتوكن: raw & bare (بدون Bearer) */
 const getTokenVariants = () => {
-  const keys = ["token","accessToken","jwt","authToken","Authorization","auth_token"];
+  const keys = ["tf_token","token","accessToken","jwt","authToken","Authorization","auth_token"];
   let raw = null;
   for (const k of keys) {
     const v = readStr(k);
-    if (!v) continue;
-    raw = v;
-    break;
+    if (v) { raw = v; break; }
   }
-  // أحيانًا التوكن محفوظ كـ JSON { token: "...", accessToken: "..." }
   if (!raw) {
-    const jsonKeys = ["auth","user","authUser","currentUser","session"];
+    const jsonKeys = ["tf_user","auth","user","authUser","currentUser","session"];
     for (const k of jsonKeys) {
       const obj = readJSON(k);
       if (obj && typeof obj === "object") {
@@ -38,7 +35,6 @@ const getTokenVariants = () => {
     }
   }
   if (!raw) return { raw: null, bare: null };
-
   const fromHeader = raw.replace(/^Bearer\s+/i, "");
   return { raw, bare: fromHeader };
 };
@@ -68,7 +64,7 @@ const userFromToken = (payload) => {
 };
 
 const readUserFromStorage = () =>
-  readJSON("currentUser") || readJSON("authUser") || readJSON("user");
+  readJSON("tf_user") || readJSON("currentUser") || readJSON("authUser") || readJSON("user");
 
 /* ===================== Auth Fetch ===================== */
 const authFetch = (url, opts = {}) => {
