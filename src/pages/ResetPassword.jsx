@@ -3,21 +3,32 @@ import React, { useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { FaEye, FaEyeSlash } from "react-icons/fa";
 
+/* ===================== API BASE ===================== */
 const API_BASE =
   (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) ||
-  process.env.REACT_APP_API_URL ||
-  "http://localhost:4000/api";
+  (typeof process !== "undefined" && process.env?.REACT_APP_API_URL) ||
+  "/api";
 
+/* ===================== authFetch (يدعم tf_token) ===================== */
 const authFetch = (url, opts = {}) => {
-  const token = localStorage.getItem("token") || sessionStorage.getItem("token");
+  const raw =
+    localStorage.getItem("tf_token") ||
+    localStorage.getItem("token") ||
+    sessionStorage.getItem("tf_token") ||
+    sessionStorage.getItem("token") ||
+    "";
+
+  const bare = raw.replace(/^Bearer\s+/i, "");
+  const headers = {
+    "Content-Type": "application/json",
+    ...(bare ? { Authorization: `Bearer ${bare}` } : {}),
+    ...(opts.headers || {}),
+  };
+
   return fetch(url, {
     credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...opts.headers,
-    },
     ...opts,
+    headers,
   });
 };
 
@@ -25,15 +36,12 @@ export default function ResetPassword() {
   const { id } = useParams();
   const navigate = useNavigate();
 
-  // === refs بدل state للقيم (uncontrolled) ===
   const usernameRef = useRef(null);
   const pwd1Ref = useRef(null);
   const pwd2Ref = useRef(null);
 
-  // state بس للأيقونة (ما منستعملها لتغيير خصائص input)
   const [showPwd1, setShowPwd1] = useState(false);
   const [showPwd2, setShowPwd2] = useState(false);
-
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
   const [okMsg, setOkMsg] = useState("");
@@ -41,17 +49,11 @@ export default function ResetPassword() {
   const toggleInputType = (ref, setShow) => {
     const el = ref?.current;
     if (!el) return;
-    // خزّن مكان المؤشر
     const start = el.selectionStart ?? null;
     const end = el.selectionEnd ?? null;
-
-    // بدّل النوع مباشرة على الـDOM
     const nextIsText = el.type === "password";
     el.type = nextIsText ? "text" : "password";
     setShow(nextIsText);
-
-    // رجّع الفوكس والمؤشر بعد تبديل النوع
-    // (Safari/iOS يحتاج setTimeout صغير)
     setTimeout(() => {
       try {
         el.focus({ preventScroll: true });
@@ -62,7 +64,13 @@ export default function ResetPassword() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setErr(""); setOkMsg("");
+    setErr("");
+    setOkMsg("");
+
+    if (!id) {
+      setErr("Missing user id in the URL.");
+      return;
+    }
 
     const username = usernameRef.current?.value?.trim() || "";
     const pwd1 = pwd1Ref.current?.value || "";
@@ -73,135 +81,26 @@ export default function ResetPassword() {
 
     setSaving(true);
     try {
-      const body = { newPassword: pwd1 };
+      // ✅ الباك يستقبل password (مش newPassword)
+      const body = { password: pwd1 };
       if (username) body.username = username;
 
-      const res = await authFetch(`${API_BASE}/users/${id}/credentials`, {
+      const res = await authFetch(`${API_BASE}/users/${encodeURIComponent(id)}/credentials`, {
         method: "PATCH",
         body: JSON.stringify(body),
       });
+
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
 
       setOkMsg("Credentials updated successfully ✅");
-      setTimeout(() => navigate(-1), 700);
+      setTimeout(() => navigate(-1), 800);
     } catch (e) {
       setErr(e.message || "Failed to update credentials");
     } finally {
       setSaving(false);
     }
   };
-
-  const PasswordField = ({ label, id, inputRef, isShown, onToggle }) => (
-    <div>
-      <label className="block text-sm mb-1" htmlFor={id}>{label}</label>
-      <div className="relative">
-        <input
-          id={id}
-          ref={inputRef}
-          // النوع الابتدائي: password دائماً. التبديل يتم عبر ref (DOM) مش عبر render.
-          type="password"
-          name={id}
-          className="w-full border rounded px-3 py-2 pr-12"
-          defaultValue=""
-          placeholder="••••••"
-          autoComplete="new-password"
-          autoCapitalize="off"
-          autoCorrect="off"
-          spellCheck={false}
-          // منع إنتر من الـsubmit الغلط أثناء الكتابة
-          onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }}
-          // حيل ضد مدراء كلمات السر
-          data-1p-ignore="true"
-          data-lpignore="true"
-          data-form-type="other"
-        />
-        {/* span (مش button) حتى ما ياخد فوكس */}
-        <span
-          role="button"
-          aria-label={isShown ? "Hide password" : "Show password"}
-          className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 cursor-pointer select-none"
-          onMouseDown={(e) => { e.preventDefault(); toggleInputType(inputRef, isShown ? () => setShowState(false) : () => setShowState(true)); }}
-          onClick={(e) => {
-            e.preventDefault();
-            toggleInputType(inputRef, isShown ? setShowPwd1 : setShowPwd1); // سيُستبدل أسفل لكل حقل
-          }}
-          onTouchStart={(e) => { e.preventDefault(); /* سنحدد أدناه تابع صحيح لكل حقل */ }}
-        >
-          {isShown ? <FaEyeSlash /> : <FaEye />}
-        </span>
-      </div>
-    </div>
-  );
-
-  // لأننا بدنا نمرّر setShow الصحيح لكل حقل:
-  const PasswordField1 = () => (
-    <div>
-      <label className="block text-sm mb-1" htmlFor="new-password">New Password</label>
-      <div className="relative">
-        <input
-          id="new-password"
-          ref={pwd1Ref}
-          type="password"
-          name="new-password"
-          className="w-full border rounded px-3 py-2 pr-12"
-          defaultValue=""
-          placeholder="••••••"
-          autoComplete="new-password"
-          autoCapitalize="off"
-          autoCorrect="off"
-          spellCheck={false}
-          onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }}
-          data-1p-ignore="true"
-          data-lpignore="true"
-          data-form-type="other"
-        />
-        <span
-          role="button"
-          aria-label={showPwd1 ? "Hide password" : "Show password"}
-          className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 cursor-pointer select-none"
-          onMouseDown={(e) => { e.preventDefault(); toggleInputType(pwd1Ref, setShowPwd1); }}
-          onTouchStart={(e) => { e.preventDefault(); toggleInputType(pwd1Ref, setShowPwd1); }}
-        >
-          {showPwd1 ? <FaEyeSlash /> : <FaEye />}
-        </span>
-      </div>
-    </div>
-  );
-
-  const PasswordField2 = () => (
-    <div>
-      <label className="block text-sm mb-1" htmlFor="new-password-confirm">Confirm New Password</label>
-      <div className="relative">
-        <input
-          id="new-password-confirm"
-          ref={pwd2Ref}
-          type="password"
-          name="new-password-confirm"
-          className="w-full border rounded px-3 py-2 pr-12"
-          defaultValue=""
-          placeholder="••••••"
-          autoComplete="new-password"
-          autoCapitalize="off"
-          autoCorrect="off"
-          spellCheck={false}
-          onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }}
-          data-1p-ignore="true"
-          data-lpignore="true"
-          data-form-type="other"
-        />
-        <span
-          role="button"
-          aria-label={showPwd2 ? "Hide password" : "Show password"}
-          className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 cursor-pointer select-none"
-          onMouseDown={(e) => { e.preventDefault(); toggleInputType(pwd2Ref, setShowPwd2); }}
-          onTouchStart={(e) => { e.preventDefault(); toggleInputType(pwd2Ref, setShowPwd2); }}
-        >
-          {showPwd2 ? <FaEyeSlash /> : <FaEye />}
-        </span>
-      </div>
-    </div>
-  );
 
   return (
     <div className="p-6 md:p-8 bg-[#F9FAFB] min-h-screen text-gray-800">
@@ -232,8 +131,69 @@ export default function ResetPassword() {
             />
           </div>
 
-          <PasswordField1 />
-          <PasswordField2 />
+          <div>
+            <label className="block text-sm mb-1" htmlFor="new-password">New Password</label>
+            <div className="relative">
+              <input
+                id="new-password"
+                ref={pwd1Ref}
+                type="password"
+                name="new-password"
+                className="w-full border rounded px-3 py-2 pr-12"
+                defaultValue=""
+                placeholder="••••••"
+                autoComplete="new-password"
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
+                onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }}
+                data-1p-ignore="true"
+                data-lpignore="true"
+                data-form-type="other"
+              />
+              <span
+                role="button"
+                aria-label={showPwd1 ? "Hide password" : "Show password"}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 cursor-pointer select-none"
+                onMouseDown={(e) => { e.preventDefault(); toggleInputType(pwd1Ref, setShowPwd1); }}
+                onTouchStart={(e) => { e.preventDefault(); toggleInputType(pwd1Ref, setShowPwd1); }}
+              >
+                {showPwd1 ? <FaEyeSlash /> : <FaEye />}
+              </span>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm mb-1" htmlFor="new-password-confirm">Confirm New Password</label>
+            <div className="relative">
+              <input
+                id="new-password-confirm"
+                ref={pwd2Ref}
+                type="password"
+                name="new-password-confirm"
+                className="w-full border rounded px-3 py-2 pr-12"
+                defaultValue=""
+                placeholder="••••••"
+                autoComplete="new-password"
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
+                onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }}
+                data-1p-ignore="true"
+                data-lpignore="true"
+                data-form-type="other"
+              />
+              <span
+                role="button"
+                aria-label={showPwd2 ? "Hide password" : "Show password"}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 cursor-pointer select-none"
+                onMouseDown={(e) => { e.preventDefault(); toggleInputType(pwd2Ref, setShowPwd2); }}
+                onTouchStart={(e) => { e.preventDefault(); toggleInputType(pwd2Ref, setShowPwd2); }}
+              >
+                {showPwd2 ? <FaEyeSlash /> : <FaEye />}
+              </span>
+            </div>
+          </div>
 
           <div className="flex items-center justify-end gap-2 pt-2">
             <button type="button" onClick={() => navigate(-1)} className="border px-4 py-2 rounded hover:bg-gray-50">
