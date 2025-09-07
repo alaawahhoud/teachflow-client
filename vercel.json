@@ -1,6 +1,7 @@
 {
   "rewrites": [
     { "source": "/api/(.*)", "destination": "https://teachflow-server.onrender.com/api/$1" },
-    { "source": "/API/(.*)", "destination": "https://teachflow-server.onrender.com/api/$1" }
+    { "source": "/API/(.*)", "destination": "https://teachflow-server.onrender.com/api/$1" },
+    { "source": "/(.*)", "destination": "/" }
   ]
 }
