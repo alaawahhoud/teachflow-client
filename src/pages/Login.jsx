@@ -43,12 +43,25 @@ const Login = () => {
       });
 
       const ct = res.headers.get("content-type") || "";
-      const body = ct.includes("application/json") ? await res.json() : { message: await res.text() };
+const body = ct.includes("application/json") ? await res.json() : { message: await res.text() };
 
-      if (!res.ok || body?.ok === false) {
-        setErrorMsg(body?.message || `Login failed (HTTP ${res.status}).`);
-        return;
-      }
+// نجاح
+if (!res.ok || body?.ok === false) {
+  setErrorMsg(body?.message || `Login failed (HTTP ${res.status}).`);
+  return;
+}
+
+// خزّني بالمفاتيح الجديدة والقديمة (توافق)
+const userStr  = JSON.stringify(body.user || {});
+const tokenStr = body.token || "";
+localStorage.setItem("tf_user",  userStr);
+localStorage.setItem("tf_token", tokenStr);
+localStorage.setItem("user",       userStr);     // ✅ legacy
+localStorage.setItem("token",      tokenStr);    // ✅ legacy
+localStorage.setItem("currentUser",userStr);     // ✅ لو في صفحات بتستعمله
+localStorage.setItem("authToken",  tokenStr);    // ✅ لو في صفحات بتستعمله
+
+navigate("/dashboard"); // بدّلي المسار إذا بروفايلك مختلف
 
       // نجاح
       if (body?.token) localStorage.setItem("tf_token", body.token);
