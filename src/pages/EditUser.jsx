@@ -169,6 +169,37 @@ async function apiCheckEnrollStatus(userId) {
   if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
   return data; // { status: "pending"|"done"|"failed", pageId?, note? }
 }
+// رجّع بيانات اليوزر من السيرفر وحدث الحالة
+async function refreshUserIntoState(userId, setFns) {
+  const { setFullName, setRole, setStatus, setPhoneLocal, setAddress, setDob,
+          setPlaceOfBirth, setGender } = setFns;
+
+  const data = await fetchJSON(`${API_BASE}/users/${userId}`);
+  // خزّني نسخة للأصل
+  setFns.originalRef.current = data || {};
+
+  // أقل شي حتى يبان بواجهة البصمة
+  setFullName(data.name || data.full_name || "");
+  setRole(data.role || "Teacher");
+  setStatus(data.status || "Active");
+  setDob((data.dob || "").slice(0,10));
+  setPlaceOfBirth(data.place_of_birth || "");
+  setGender(data.gender || "");
+
+  // إذا بدّك إظهار سريع للتلفون/العنوان
+  const phone = (data.phone || "").replace(/^\+961\s?/, "");
+  setPhoneLocal(phone);
+  setAddress(data.address || "");
+}
+
+// Fallback: لو لأي سبب السيرفر ما خزّن بالبصمة من /scan
+async function persistFingerprintToUser(userId, pageId, deviceId) {
+  if (!pageId) return;
+  const fd = new FormData();
+  fd.set("fingerprint_page_id", String(pageId));
+  if (deviceId) fd.set("fingerprint_device_id", String(deviceId));
+  await fetchJSON(`${API_BASE}/users/${userId}`, { method: "PATCH", body: fd });
+}
 
 /* ===================== Component ===================== */
 export default function EditUser() {
@@ -650,43 +681,83 @@ export default function EditUser() {
               title="Identifier of the ESP32 at the scanner (e.g., scanner-001)"
             />
 
-            <button
-              type="button"
-              disabled={!id || fpPhase === "pending"}
-              onClick={async () => {
-                try {
-                  setFpPhase("pending");
-                  const req = await apiRequestEnroll(id);
-                  setFpInfo({ pageId: req.pageId });
-                  const start = Date.now();
-                  const poll = async () => {
-                    try {
-                      const s = await apiCheckEnrollStatus(id);
-                      if (s.status === "done") { setFpPhase("done"); setFpInfo((p)=>({...(p||{}), ...s})); return; }
-                      if (s.status === "failed") { setFpPhase("failed"); setFpInfo((p)=>({...(p||{}), ...s})); return; }
-                      if (Date.now() - start > 120000) { setFpPhase("failed"); setFpInfo({ note: "Timeout" }); return; }
-                      setTimeout(poll, 2000);
-                    } catch (e) {
-                      setFpPhase("failed");
-                      setFpInfo({ note: e.message });
-                    }
-                  };
-                  setTimeout(poll, 1500);
-                } catch (e) {
-                  setFpPhase("failed");
-                  setFpInfo({ note: e.message });
-                }
-              }}
-              className={
-                "text-sm px-3 py-1.5 rounded-md border transition " +
-                (id
-                  ? (fpPhase === "pending" ? "bg-yellow-500 text-white border-yellow-500" : "bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700")
-                  : "bg-gray-200 text-gray-500 border-gray-200 cursor-not-allowed")
-              }
-              title={!id ? "Missing user id" : "Send enroll command to ESP32"}
-            >
-              {fpPhase === "pending" ? "Enrolling..." : "Add / Update Fingerprint"}
-            </button>
+  <button
+  type="button"
+  disabled={!id || fpPhase === "pending"}
+  onClick={async () => {
+    try {
+      setFpPhase("pending");
+      const req = await apiRequestEnroll(id);
+      setFpInfo({ pageId: req.pageId });
+
+      const start = Date.now();
+      const poll = async () => {
+        try {
+          const s = await apiCheckEnrollStatus(id);
+          if (s.status === "done") {
+            setFpPhase("done");
+            setFpInfo((p) => ({ ...(p || {}), ...s })); // فيه pageId و device_id أحيانًا
+
+            // ✅ 1) نضمن الكتابة (fallback آمن، حتى لو السيرفر كتب من /scan)
+            await persistFingerprintToUser(id, s.pageId || req.pageId, getFpDeviceId());
+
+            // ✅ 2) نعمل refresh للسجل حتى يبين pageId فورًا بالواجهة
+            await refreshUserIntoState(id, {
+              setFullName, setRole, setStatus, setPhoneLocal, setAddress,
+              setDob, setPlaceOfBirth, setGender, originalRef
+            });
+
+            return;
+          }
+          if (s.status === "failed") {
+            setFpPhase("failed");
+            setFpInfo((p) => ({ ...(p || {}), ...s }));
+            return;
+          }
+          if (Date.now() - start > 120000) {
+            setFpPhase("failed");
+            setFpInfo({ note: "Timeout" });
+            return;
+          }
+          setTimeout(poll, 2000);
+        } catch (e) {
+          setFpPhase("failed");
+          setFpInfo({ note: e.message });
+        }
+      };
+      setTimeout(poll, 1500);
+    } catch (e) {
+      setFpPhase("failed");
+      setFpInfo({ note: e.message });
+    }
+  }}
+  className={
+    "text-sm px-3 py-1.5 rounded-md border transition " +
+    (id
+      ? (fpPhase === "pending" ? "bg-yellow-500 text-white border-yellow-500" : "bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700")
+      : "bg-gray-200 text-gray-500 border-gray-200 cursor-not-allowed")
+  }
+  title={!id ? "Missing user id" : "Send enroll command to ESP32"}
+>
+  {fpPhase === "pending" ? "Enrolling..." : "Add / Update Fingerprint"}
+</button>
+<section className="mb-8">
+  <FingerprintEnroll
+    userId={id}
+    initialPageId={originalRef.current?.fingerprint_page_id || null}
+    defaultDeviceId={fpDeviceId}
+    onEnrolled={async (newPageId) => {
+      // fallback + refresh لو خلص التسجيل من الكومبوننت التاني
+      await persistFingerprintToUser(id, newPageId, getFpDeviceId());
+      await refreshUserIntoState(id, {
+        setFullName, setRole, setStatus, setPhoneLocal, setAddress,
+        setDob, setPlaceOfBirth, setGender, originalRef
+      });
+      setFpPhase("done");
+      setFpInfo({ pageId: newPageId });
+    }}
+  />
+</section>
 
             <button
               type="button"
