@@ -5,9 +5,10 @@ import FingerprintEnroll from "../components/FingerprintEnroll.jsx";
 
 /* ===================== API BASE ===================== */
 const API_BASE =
-  (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_URL) ||
-  process.env.REACT_APP_API_URL ||
-  "http://localhost:4000/api";
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) ||
+  (typeof process !== "undefined" && process.env?.REACT_APP_API_URL) ||
+  "/api";
+
 
 /* ===================== Auth Fetch (cookies + optional JWT) ===================== */
 const authFetch = (url, opts = {}) => {
@@ -741,23 +742,6 @@ export default function EditUser() {
 >
   {fpPhase === "pending" ? "Enrolling..." : "Add / Update Fingerprint"}
 </button>
-<section className="mb-8">
-  <FingerprintEnroll
-    userId={id}
-    initialPageId={originalRef.current?.fingerprint_page_id || null}
-    defaultDeviceId={fpDeviceId}
-    onEnrolled={async (newPageId) => {
-      // fallback + refresh لو خلص التسجيل من الكومبوننت التاني
-      await persistFingerprintToUser(id, newPageId, getFpDeviceId());
-      await refreshUserIntoState(id, {
-        setFullName, setRole, setStatus, setPhoneLocal, setAddress,
-        setDob, setPlaceOfBirth, setGender, originalRef
-      });
-      setFpPhase("done");
-      setFpInfo({ pageId: newPageId });
-    }}
-  />
-</section>
 
             <button
               type="button"
