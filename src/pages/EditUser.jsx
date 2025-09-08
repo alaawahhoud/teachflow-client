@@ -5,9 +5,8 @@ import FingerprintEnroll from "../components/FingerprintEnroll.jsx";
 
 /* ===================== API BASE ===================== */
 const API_BASE =
-  (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) ||
-  (typeof process !== "undefined" && process.env?.REACT_APP_API_URL) ||
-  "/api";
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL?.replace(/\/$/, "")) ||
+  "https://teachflow-server.onrender.com/api";
 
 
 /* ===================== Auth Fetch (cookies + optional JWT) ===================== */
@@ -892,13 +891,6 @@ export default function EditUser() {
             )}
           </div>
         </div>
-<section className="mb-8">
-  <FingerprintEnroll
-    userId={id}
-    initialPageId={originalRef.current?.fingerprint_page_id || null}
-    defaultDeviceId="scanner-001"
-  />
-</section>
 
         {errorMsg && (
           <div className="mb-4 rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">

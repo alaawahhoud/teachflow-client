@@ -3,9 +3,8 @@ import React, { useEffect, useRef, useState } from "react";
 
 /* ======== API BASE + authFetch ======== */
 const API_BASE =
-  (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_URL) ||
-  process.env.REACT_APP_API_URL ||
-  "http://localhost:4000/api";
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL?.replace(/\/$/, "")) ||
+  "https://teachflow-server.onrender.com/api";
 
 const authFetch = (url, opts = {}) => {
   const token = localStorage.getItem("token") || sessionStorage.getItem("token");
