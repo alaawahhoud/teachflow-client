@@ -42,8 +42,8 @@ const Sidebar = () => {
 
   return (
     <div
-      className="fixed left-0 z-30 bg-[#F9FAFB] dark:bg-[#111827] shadow-sm
-                 overflow-y-auto flex flex-col items-center py-3 w-28 transition-colors"
+      className="hidden md:flex fixed left-0 z-30 bg-[#F9FAFB] dark:bg-[#111827] shadow-sm overflow-y-auto flex-col items-center py-3 w-28 transition-colors"
+
       style={{ top: HEADER_H, height: `calc(100vh - ${HEADER_H}px)` }} // ✅ قد الشاشة وتحت الهيدر
     >
       <div className="flex flex-col items-center gap-6">

@@ -5,7 +5,7 @@ import { FaEnvelope, FaPhone } from "react-icons/fa";
 const Footer = () => {
   return (
     <footer className="bg-white border-t text-gray-800">
-      <div className="max-w-7xl mx-auto px-6 py-10 flex flex-col md:flex-row justify-between gap-8">
+<div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 md:py-10 flex flex-col md:flex-row justify-between gap-8">
         {/* Left section - Brand */}
         <div>
           <h2 className="text-2xl font-bold">TeachFlow</h2>
