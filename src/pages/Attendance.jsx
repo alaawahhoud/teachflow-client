@@ -1,12 +1,62 @@
-// ✅ الكود المعدل لتفعيل dark mode في Attendance.jsx بالكامل
-
-import React, { useState, useRef, useEffect } from "react";
+// client/src/pages/Attendance.jsx
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
 
-// top
- 
+// ===== إعدادات عامة =====
+const API_BASE =
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL?.replace(/\/$/, "")) ||
+  "http://localhost:4000/api";
+
+// حد التأخير (HH:MM:SS)
+const LATE_AFTER = "07:40:00";
+
+// مقارنة وقت HH:MM:SS كسلسلة
+const isAfter = (t, cutoff) => {
+  if (!t) return false;
+  return t.localeCompare(cutoff) === 1; // t > cutoff
+};
+
+// يحسب الحالة من وقت الدخول
+const statusFromCheckIn = (checkIn) => {
+  if (!checkIn) return "Absent";
+  return isAfter(checkIn, LATE_AFTER) ? "Late" : "Present";
+};
+
+// لتوحيد بيانات السيرفر
+const normalizeRow = (r) => {
+  // توقع أشكال شائعة للحقول
+  const id = r.user_id ?? r.teacher_id ?? r.id;
+  const name = r.full_name ?? r.name ?? r.teacher_name ?? "";
+  const cls = r.class_name ?? r.class ?? r.grade ?? "—";
+  const subject = r.subject_name ?? r.subject ?? "—";
+  const check_in = (r.check_in_time ?? r.check_in ?? r.in_time ?? "")?.slice(0, 8) || "";
+  const check_out = (r.check_out_time ?? r.check_out ?? r.out_time ?? "")?.slice(0, 8) || "";
+  const note = r.note ?? r.reason ?? "";
+  const status = r.status
+    ? r.status // لو السيرفر راجع الحالة جاهزة من SQL
+    : statusFromCheckIn(check_in);
+
+  return {
+    id,
+    name,
+    class: cls,
+    subject,
+    status,
+    notes: note,
+    check_in_time: check_in,
+    check_out_time: check_out,
+    initials: String(name)
+      .split(" ")
+      .filter(Boolean)
+      .map((n) => n[0])
+      .join("")
+      .slice(0, 3)
+      .toUpperCase(),
+  };
+};
+
 const Attendance = () => {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().substr(0, 10));
   const [selectedTeacher, setSelectedTeacher] = useState("All Teachers");
@@ -14,77 +64,78 @@ const Attendance = () => {
   const [showExportOptions, setShowExportOptions] = useState(false);
   const exportRef = useRef(null);
 
-  const [teachers, setTeachers] = useState([]);
+  // البيانات الفعلية من السيرفر
+  const [teachers, setTeachers] = useState([]); // مصفوفة صفوف اليوم (اسم، مادة، صف، حالة، ملاحظات...)
+  const [teachersMaster, setTeachersMaster] = useState([]); // لائحة أسماء المعلّمين للفلاتر
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
 
-  const getStatusColor = (status) => {
-    const base = "rounded px-3 py-1 text-sm font-medium";
-    switch (status) {
-      case "Present": return `${base} bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300`;
-      case "Late": return `${base} bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300`;
-      case "Absent": return `${base} bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300`;
-      default: return `${base} bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300`;
+  // فلتر الحالة (واجهة فقط – السيرفر كمان بيستقبل)
+  const toggleStatusFilter = (status) => {
+    setStatusFilters((p) => ({ ...p, [status]: !p[status] }));
+  };
+
+  // فلترة محليّة للحفاظ على الشكل الحالي (ومع ذلك نطلبها أيضاً من السيرفر)
+  const filteredTeachers = useMemo(() => {
+    return teachers.filter((s) => {
+      const matchesTeacher = selectedTeacher === "All Teachers" || s.name === selectedTeacher;
+      const matchesStatus = statusFilters[s.status];
+      return matchesTeacher && matchesStatus;
+    });
+  }, [teachers, selectedTeacher, statusFilters]);
+
+  // حفظ (يبعت كل صف – لو بدك تحصرها بالمعدّل فقط، سهل نعدّل)
+  const handleSaveAttendance = async () => {
+    try {
+      for (let s of teachers) {
+        const body = {
+          user_id: s.id,
+          date: selectedDate,
+          status: s.status, // "Present" | "Late" | "Absent"
+          check_in_time: s.check_in_time || null,
+          check_out_time: s.check_out_time || null,
+          note: s.notes || null,
+        };
+        const res = await fetch(`${API_BASE}/attendance`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          console.error("Failed to save:", data?.message || data);
+        }
+      }
+      alert("Attendance saved successfully ✅");
+    } catch (error) {
+      console.error("Error saving attendance:", error);
+      alert("Something went wrong ❌");
     }
   };
 
-  const toggleStatusFilter = (status) => {
-    setStatusFilters({ ...statusFilters, [status]: !statusFilters[status] });
-  };
-
-  const filteredTeachers = teachers.filter((s) => {
-    const matchesTeacher = selectedTeacher === "All Teachers" || s.name === selectedTeacher;
-    const matchesStatus = statusFilters[s.status];
-    return matchesTeacher && matchesStatus;
-  });
-const handleSaveAttendance = async () => {
-  try {
-    const API_BASE = import.meta?.env?.VITE_API_URL || 'http://localhost:4000/api';
-
- // save attendance — send the actual teacher id + notes
-for (let s of teachers) {
-  const res = await fetch(`${API_BASE}/attendance`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      // If you use auth, include the token:
-      // Authorization: `Bearer ${localStorage.getItem('tf_token')}`
-    },
-    body: JSON.stringify({
-      user_id: s.id,            // <-- use teacher id
-      date: selectedDate,
-      status: s.status,         // "Present" | "Late" | "Absent"
-      check_in_time: s.status === "Present" ? "07:30:00" : null,
-      check_out_time: s.status === "Present" ? "14:30:00" : null,
-      note: s.notes || null,    // <-- pass notes
-      recorded_by: 1            // (optional) current admin id
-    }),
-  });
-  const data = await res.json();
-  if (!res.ok) console.error("Failed to save:", data?.message || data);
-}
-
-    alert("Attendance saved successfully ✅");
-  } catch (error) {
-    console.error("Error saving attendance:", error);
-    alert("Something went wrong ❌");
-  }
-};
-
-
+  // تصدير PDF (نفس الشكل)
   const handleExportPDF = () => {
     const doc = new jsPDF();
     doc.text("Attendance Report", 14, 16);
     autoTable(doc, {
       startY: 20,
       head: [["Name", "Class", "Subject", "Status", "Notes"]],
-      body: filteredTeachers.map((s) => [s.name, s.class, s.subject, s.status, s.notes]),
+      body: filteredTeachers.map((s) => [s.name, s.class, s.subject, s.status, s.notes || ""]),
     });
     doc.save("attendance_report.pdf");
     setShowExportOptions(false);
   };
 
+  // تصدير Excel (نفس الشكل)
   const handleExportExcel = () => {
     const ws = XLSX.utils.json_to_sheet(
-      filteredTeachers.map((s) => ({ Name: s.name, Class: s.class, Subject: s.subject, Status: s.status, Notes: s.notes }))
+      filteredTeachers.map((s) => ({
+        Name: s.name,
+        Class: s.class,
+        Subject: s.subject,
+        Status: s.status,
+        Notes: s.notes || "",
+      }))
     );
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Attendance");
@@ -92,28 +143,122 @@ for (let s of teachers) {
     setShowExportOptions(false);
   };
 
- useEffect(() => {
-  const fetchTeachers = async () => {
-    try {
-      const res = await fetch("http://localhost:5000/api/users/teachers");
-      const data = await res.json();
-      setTeachers(data.map((t) => ({
-        id: t.id,
-        name: t.full_name,
-        class: "Grade 9A", // مؤقتًا
-        subject: "Math", // مؤقتًا
-        status: "Present",
-        notes: "",
-        initials: t.full_name.split(" ").map((n) => n[0]).join(""),
-      })));
-    } catch (error) {
-      console.error("Error fetching teachers:", error);
-    }
-  };
+  // جلب قائمة المعلمين للفلاتر (اسم/id)
+  useEffect(() => {
+    let ignore = false;
+    (async () => {
+      try {
+        // Endpoint مرن: جرّب الأكثر من واحد
+        const endpoints = [
+          `${API_BASE}/users?role=Teacher`,
+          `${API_BASE}/users/teachers`,
+          `${API_BASE}/users?type=teacher`,
+        ];
+        for (const ep of endpoints) {
+          try {
+            const r = await fetch(ep);
+            if (!r.ok) continue;
+            const j = await r.json();
+            if (ignore) return;
+            const arr = Array.isArray(j?.data) ? j.data : Array.isArray(j) ? j : [];
+            const mapped = arr
+              .map((t) => ({
+                id: t.id ?? t.user_id ?? t.teacher_id,
+                name: t.full_name ?? t.name ?? "",
+              }))
+              .filter((x) => x.id && x.name);
+            if (mapped.length) {
+              setTeachersMaster(mapped);
+              return;
+            }
+          } catch {}
+        }
+      } catch (e) {
+        console.warn("teachers list failed", e);
+      }
+    })();
+    return () => {
+      ignore = true;
+    };
+  }, []);
 
-  fetchTeachers();
-}, []);
+  // جلب حضور اليوم مع الفلاتر – من السيرفر (تفعيل فلاتر DB)
+  useEffect(() => {
+    let ignore = false;
+    (async () => {
+      setLoading(true);
+      setErr("");
+      try {
+        const params = new URLSearchParams();
+        params.set("date", selectedDate);
 
+        // فلتر المعلّم (اختياري)
+        if (selectedTeacher !== "All Teachers") {
+          const t = teachersMaster.find((x) => x.name === selectedTeacher);
+          if (t?.id) params.set("teacherId", String(t.id));
+          else params.set("teacherName", selectedTeacher);
+        }
+
+        // فلاتر الحالة – نرسلها للسيرفر ليستفيد منها بالـ SQL
+        const enabled = Object.entries(statusFilters)
+          .filter(([, on]) => on)
+          .map(([k]) => k);
+        if (enabled.length && enabled.length < 3) {
+          // لو كله مفعّل بلا داعي نرسل
+          params.set("status", enabled.join(","));
+        }
+
+        // نقاط نهاية مرنة
+        const urls = [
+          `${API_BASE}/attendance?${params.toString()}`,
+          `${API_BASE}/attendance/list?${params.toString()}`,
+          `${API_BASE}/attendance/by-date?${params.toString()}`,
+        ];
+
+        let data = null;
+        for (const u of urls) {
+          try {
+            const r = await fetch(u);
+            const j = await r.json().catch(() => ({}));
+            if (r.ok && (Array.isArray(j?.data) || Array.isArray(j))) {
+              data = Array.isArray(j?.data) ? j.data : j;
+              break;
+            }
+          } catch {}
+        }
+
+        // إذا السيرفر ما رجّع شي، اعتبر الكل غياب بهاليوم (رؤوس أقلام من master)
+        let rows = [];
+        if (Array.isArray(data) && data.length) {
+          rows = data.map(normalizeRow);
+        } else if (teachersMaster.length) {
+          // fallback: ابنِ صفوف من الأسامي فقط (Absent افتراضياً)
+          rows = teachersMaster.map((t) =>
+            normalizeRow({
+              user_id: t.id,
+              full_name: t.name,
+              class_name: "—",
+              subject_name: "—",
+              check_in_time: "",
+              check_out_time: "",
+              status: "Absent",
+              note: "",
+            })
+          );
+        }
+
+        if (!ignore) setTeachers(rows);
+      } catch (e) {
+        if (!ignore) {
+          setErr(e?.message || "Failed to load attendance");
+          setTeachers([]);
+        }
+      } finally {
+        if (!ignore) setLoading(false);
+      }
+    })();
+    // كل ما تغيّر التاريخ / الأستاذ / الفلاتر، نعيد الجلب
+  }, [selectedDate, selectedTeacher, statusFilters, teachersMaster]);
 
   return (
     <div className="p-6 bg-[#F9FAFB] dark:bg-[#1F2937] min-h-screen text-gray-800 dark:text-white">
@@ -137,7 +282,9 @@ for (let s of teachers) {
           <label className="block text-sm font-medium mb-1 dark:text-white">Class</label>
           <select className="w-full bg-gray-100 dark:bg-gray-700 dark:text-white rounded px-3 py-2">
             <option>All Classes</option>
-            {Array.from({ length: 12 }, (_, i) => <option key={i}>Grade {i + 1}</option>)}
+            {Array.from({ length: 12 }, (_, i) => (
+              <option key={i}>Grade {i + 1}</option>
+            ))}
             <option>KG1</option>
             <option>KG2</option>
             <option>KG3</option>
@@ -152,10 +299,9 @@ for (let s of teachers) {
             onChange={(e) => setSelectedTeacher(e.target.value)}
           >
             <option>All Teachers</option>
-            {teachers.map((t) => (
-  <option key={t.id}>{t.name}</option>
-))}
-
+            {teachersMaster.map((t) => (
+              <option key={t.id}>{t.name}</option>
+            ))}
           </select>
         </div>
       </div>
@@ -166,7 +312,11 @@ for (let s of teachers) {
           <div className="flex gap-6 flex-wrap">
             {Object.keys(statusFilters).map((status) => (
               <label key={status} className="flex items-center gap-2 text-sm dark:text-white">
-                <input type="checkbox" checked={statusFilters[status]} onChange={() => toggleStatusFilter(status)} />
+                <input
+                  type="checkbox"
+                  checked={statusFilters[status]}
+                  onChange={() => toggleStatusFilter(status)}
+                />
                 {status}
               </label>
             ))}
@@ -195,71 +345,113 @@ for (let s of teachers) {
             </tr>
           </thead>
           <tbody>
-            {filteredTeachers.map((teacher, i) => (
-              <tr key={i} className="border-t dark:border-gray-600">
-                <td className="py-3 px-4">
-                  <div className={`w-10 h-10 rounded-full flex items-center justify-center font-semibold text-white ${
-                    i === 0 ? "bg-blue-500" : i === 1 ? "bg-green-500" : "bg-red-500"
-                  }`}>
-                    {teacher.initials}
-                  </div>
-                </td>
-                <td className="dark:text-white">{teacher.name}</td>
-                <td className="dark:text-white">{teacher.class}</td>
-                <td className="dark:text-white">{teacher.subject}</td>
-                <td>
-                  <select
-                    value={teacher.status}
-                    className={getStatusColor(teacher.status)}
-                    onChange={(e) => {
-                      const updated = [...teachers];
-                      updated[i].status = e.target.value;
-                      setTeachers(updated);
-                    }}
-                  >
-                    <option>Present</option>
-                    <option>Late</option>
-                    <option>Absent</option>
-                  </select>
-                </td>
-                <td>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <select
-                      className="bg-gray-100 dark:bg-gray-700 dark:text-white px-3 py-1 rounded w-36"
-                      value={
-                        ["Sick", "Death in family", "Transportation Delay"].includes(teacher.notes)
-                          ? teacher.notes
-                          : "Other"
-                      }
-                      onChange={(e) => {
-                        const updated = [...teachers];
-                        updated[i].notes = e.target.value === "Other" ? "" : e.target.value;
-                        setTeachers(updated);
-                      }}
-                    >
-                      <option value="">Select reason</option>
-                      <option value="Sick">Sick</option>
-                      <option value="Death in family">Death in family</option>
-                      <option value="Transportation Delay">Transportation Delay</option>
-                      <option value="Other">Other</option>
-                    </select>
-                    {!["Sick", "Death in family", "Transportation Delay"].includes(teacher.notes) && (
-                      <input
-                        type="text"
-                        placeholder="Write note..."
-                        className="bg-gray-100 dark:bg-gray-700 dark:text-white px-3 py-1 rounded w-full sm:w-48"
-                        value={teacher.notes}
-                        onChange={(e) => {
-                          const updated = [...teachers];
-                          updated[i].notes = e.target.value;
-                          setTeachers(updated);
-                        }}
-                      />
-                    )}
-                  </div>
+            {loading ? (
+              <tr>
+                <td className="py-6 px-4 text-sm text-gray-500 dark:text-gray-300" colSpan={6}>
+                  Loading…
                 </td>
               </tr>
-            ))}
+            ) : err ? (
+              <tr>
+                <td className="py-6 px-4 text-sm text-red-600" colSpan={6}>
+                  {err}
+                </td>
+              </tr>
+            ) : (
+              filteredTeachers.map((teacher, i) => (
+                <tr key={teacher.id ?? i} className="border-t dark:border-gray-600">
+                  <td className="py-3 px-4">
+                    <div
+                      className={`w-10 h-10 rounded-full flex items-center justify-center font-semibold text-white ${
+                        i === 0 ? "bg-blue-500" : i === 1 ? "bg-green-500" : "bg-red-500"
+                      }`}
+                    >
+                      {teacher.initials}
+                    </div>
+                  </td>
+                  <td className="dark:text-white">{teacher.name}</td>
+                  <td className="dark:text-white">{teacher.class}</td>
+                  <td className="dark:text-white">{teacher.subject}</td>
+                  <td>
+                    <select
+                      value={teacher.status}
+                      className={(() => {
+                        const base = "rounded px-3 py-1 text-sm font-medium";
+                        switch (teacher.status) {
+                          case "Present":
+                            return `${base} bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300`;
+                          case "Late":
+                            return `${base} bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300`;
+                          case "Absent":
+                            return `${base} bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300`;
+                          default:
+                            return `${base} bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300`;
+                        }
+                      })()}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setTeachers((prev) =>
+                          prev.map((x) => (x.id === teacher.id ? { ...x, status: v } : x))
+                        );
+                      }}
+                    >
+                      <option>Present</option>
+                      <option>Late</option>
+                      <option>Absent</option>
+                    </select>
+                    {/* عرض أوقات الدخول/الخروج (قراءة فقط) */}
+                    {teacher.check_in_time || teacher.check_out_time ? (
+                      <div className="text-xs text-gray-500 dark:text-gray-300 mt-1">
+                        {teacher.check_in_time && <span>In: {teacher.check_in_time}</span>}
+                        {teacher.check_out_time && (
+                          <span className="ml-2">Out: {teacher.check_out_time}</span>
+                        )}
+                      </div>
+                    ) : null}
+                  </td>
+                  <td>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <select
+                        className="bg-gray-100 dark:bg-gray-700 dark:text-white px-3 py-1 rounded w-36"
+                        value={
+                          ["Sick", "Death in family", "Transportation Delay"].includes(teacher.notes)
+                            ? teacher.notes
+                            : "Other"
+                        }
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setTeachers((prev) =>
+                            prev.map((x) =>
+                              x.id === teacher.id ? { ...x, notes: v === "Other" ? "" : v } : x
+                            )
+                          );
+                        }}
+                      >
+                        <option value="">Select reason</option>
+                        <option value="Sick">Sick</option>
+                        <option value="Death in family">Death in family</option>
+                        <option value="Transportation Delay">Transportation Delay</option>
+                        <option value="Other">Other</option>
+                      </select>
+                      {!["Sick", "Death in family", "Transportation Delay"].includes(teacher.notes) && (
+                        <input
+                          type="text"
+                          placeholder="Write note..."
+                          className="bg-gray-100 dark:bg-gray-700 dark:text-white px-3 py-1 rounded w-full sm:w-48"
+                          value={teacher.notes}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setTeachers((prev) =>
+                              prev.map((x) => (x.id === teacher.id ? { ...x, notes: v } : x))
+                            );
+                          }}
+                        />
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
@@ -291,12 +483,11 @@ for (let s of teachers) {
         </div>
 
         <button
-  onClick={handleSaveAttendance}
-  className="px-4 py-2 bg-blue-600 text-white rounded-xl shadow hover:bg-blue-700"
->
-  Save Attendance
-</button>
-
+          onClick={handleSaveAttendance}
+          className="px-4 py-2 bg-blue-600 text-white rounded-xl shadow hover:bg-blue-700"
+        >
+          Save Attendance
+        </button>
       </div>
     </div>
   );

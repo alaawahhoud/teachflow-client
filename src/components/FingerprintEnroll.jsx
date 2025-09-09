@@ -6,15 +6,10 @@ const API_BASE =
   (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL?.replace(/\/$/, "")) ||
   "https://teachflow-server.onrender.com/api";
 
-const buildUrl = (url) => {
-  if (/^https?:\/\//i.test(url)) return url;
-  const path = url.startsWith("/") ? url : `/${url}`;
-  return `${API_BASE}${path}`;
-};
-
 const authFetch = (url, opts = {}) => {
   const token = localStorage.getItem("token") || sessionStorage.getItem("token");
-  return fetch(buildUrl(url), {
+  const full = url.startsWith("http") ? url : `${API_BASE}${url}`;
+  return fetch(full, {
     credentials: "include",
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -24,43 +19,38 @@ const authFetch = (url, opts = {}) => {
   });
 };
 
-/* ======== Helpers: جرّب /fingerprints/... ثم compat ======== */
+/* ======== Helpers: جرّب /api/... و /api/fingerprints/... ======== */
 async function postEnrollRequest(user_id, device_id) {
   const body = JSON.stringify({ user_id, device_id });
   const headers = { "Content-Type": "application/json" };
-
-  let r = await authFetch(`/fingerprints/enroll-request`, { method: "POST", headers, body });
-  if (r.status === 404) r = await authFetch(`/enroll-request`, { method: "POST", headers, body });
-
+  let r = await authFetch(`/enroll-request`, { method: "POST", headers, body });
+  if (r.status === 404) r = await authFetch(`/fingerprints/enroll-request`, { method: "POST", headers, body });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j?.message || `HTTP ${r.status}`);
   return j; // { user_id, device_id, pageId }
 }
 
 async function getEnrollStatus(user_id) {
-  let r = await authFetch(`/fingerprints/enroll-status?user_id=${encodeURIComponent(user_id)}`);
-  if (r.status === 404) r = await authFetch(`/enroll-status?user_id=${encodeURIComponent(user_id)}`);
+  let r = await authFetch(`/enroll-status?user_id=${encodeURIComponent(user_id)}`);
+  if (r.status === 404) r = await authFetch(`/fingerprints/enroll-status?user_id=${encodeURIComponent(user_id)}`);
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j?.message || `HTTP ${r.status}`);
-  return j; // { status: pending|done|failed, pageId?, device_id?, note? }
+  return j; // { status, pageId?, device_id?, note? }
 }
 
-async function getCommand(device_id) {
-  // يرد { action:"enroll"| "none", pageId?, name? }
-  let r = await authFetch(`/fingerprints/command?deviceId=${encodeURIComponent(device_id)}`);
-  if (r.status === 404) r = await authFetch(`/command?deviceId=${encodeURIComponent(device_id)}`);
-  let j = {};
-  try { j = await r.json(); } catch {}
-  return { ok: r.ok, json: j, status: r.status };
-}
-
+// (اختياري) إلغاء طلب التسجيل المعلّق بالقوائم: باستعمال /api/enroll/result ok:false
 async function cancelPendingEnroll(pageId) {
   if (!pageId) return false;
   const headers = { "Content-Type": "application/json" };
   const body = JSON.stringify({ pageId, ok: false });
 
-  let r = await authFetch(`/fingerprints/enroll/result`, { method: "POST", headers, body });
-  if (r.status === 404) r = await authFetch(`/enroll/result`, { method: "POST", headers, body });
+  // أولاً: مسار esp-compat
+  let r = await authFetch(`/enroll/result`, { method: "POST", headers, body });
+  if (r.status === 404) {
+    // تفرّع بديل إذا مركّب تحت /fingerprints
+    r = await authFetch(`/fingerprints/enroll/result`, { method: "POST", headers, body });
+  }
+  // حتى لو 200، ما ضروري يرجع JSON
   return r.ok;
 }
 
@@ -75,7 +65,6 @@ export default function FingerprintEnroll({
     localStorage.getItem("fp_device_id") || defaultDeviceId
   );
   const [pageId, setPageId] = useState(initialPageId);
-  const [userName, setUserName] = useState("");
 
   // UI state
   const [status, setStatus] = useState("idle"); // idle|requesting|waiting|done|failed
@@ -83,32 +72,15 @@ export default function FingerprintEnroll({
 
   // Debug / connectivity
   const [apiOk, setApiOk] = useState(null); // null|true|false
-  const [lastCmd, setLastCmd] = useState(null); // آخر رد من /command
+  const [lastCmd, setLastCmd] = useState(null); // آخر رد من /api/command
   const [lastError, setLastError] = useState("");
 
   // polling
   const [polling, setPolling] = useState(false);
   const pollTimer = useRef(null);
 
-  /* === hydrate from server: pageId + name === */
   useEffect(() => {
-    let ignore = false;
-    (async () => {
-      if (!userId) return;
-      try {
-        const r = await authFetch(`/users/${userId}`);
-        const j = await r.json().catch(() => ({}));
-        if (!ignore && r.ok && j) {
-          setPageId(j.fingerprint_page_id ?? initialPageId ?? null);
-          setUserName(j.full_name || j.name || "");
-        }
-      } catch {}
-    })();
-    return () => { ignore = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId]);
-
-  useEffect(() => {
+    // خزني الـ DeviceId للمرّة الجاية
     localStorage.setItem("fp_device_id", String(deviceId || "scanner-001"));
   }, [deviceId]);
 
@@ -124,6 +96,7 @@ export default function FingerprintEnroll({
     pollTimer.current = setInterval(async () => {
       try {
         const st = await getEnrollStatus(userId);
+        // console.log("enroll-status", st);
         if (st.status && st.status !== "pending") {
           clearInterval(pollTimer.current);
           pollTimer.current = null;
@@ -143,6 +116,7 @@ export default function FingerprintEnroll({
         }
       } catch (e) {
         setLastError(e?.message || "polling error");
+        // خفّفي الإزعاج: خليه يحاول مرة الجاية
       }
     }, 1500);
   };
@@ -178,10 +152,14 @@ export default function FingerprintEnroll({
     setApiOk(null);
     setLastCmd(null);
     try {
-      const { ok, json, status } = await getCommand(deviceId);
-      setApiOk(ok);
-      setLastCmd(json || {});
-      if (!ok) setLastError(`API ${status}`);
+      const res = await authFetch(`/command?deviceId=${encodeURIComponent(deviceId)}`);
+      setApiOk(res.ok);
+      let j = {};
+      try { j = await res.json(); } catch {}
+      setLastCmd(j || {});
+      if (!res.ok) {
+        setLastError(`API ${res.status}`);
+      }
     } catch (e) {
       setApiOk(false);
       setLastError(e?.message || "API unreachable");
@@ -196,6 +174,7 @@ export default function FingerprintEnroll({
         await cancelPendingEnroll(pid);
       }
     } catch (e) {
+      // ما نوقفك لو فشل الإلغاء بالسيرفر
       setLastError(e?.message || "cancel failed");
     } finally {
       stopPolling();
@@ -208,7 +187,6 @@ export default function FingerprintEnroll({
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-base font-semibold text-gray-800">Fingerprint</h3>
         <span className="text-xs text-gray-500">
-          {userName ? `${userName} — ` : ""}
           {pageId ? `Current page: #${pageId}` : "No fingerprint yet"}
         </span>
       </div>
@@ -216,7 +194,8 @@ export default function FingerprintEnroll({
       {/* Connection / debug strip */}
       <div className="flex flex-wrap items-center gap-2 mb-3 text-xs">
         <span className="px-2 py-1 rounded border bg-gray-50">
-          API: {apiOk === null ? "—" : apiOk ? "Online ✅" : "Offline ❌"}
+          API:{" "}
+          {apiOk === null ? "—" : apiOk ? "Online ✅" : "Offline ❌"}
         </span>
         <span className="px-2 py-1 rounded border bg-gray-50">
           Polling: {polling ? "ON" : "OFF"}
@@ -225,7 +204,6 @@ export default function FingerprintEnroll({
           <span className="px-2 py-1 rounded border bg-gray-50">
             Last command: {lastCmd.action || "—"}
             {typeof lastCmd.pageId !== "undefined" ? ` (page ${lastCmd.pageId})` : ""}
-            {lastCmd.name ? ` — ${lastCmd.name}` : ""}
           </span>
         )}
         {lastError && (
