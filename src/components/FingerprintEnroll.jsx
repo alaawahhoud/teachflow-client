@@ -200,12 +200,14 @@ export default function FingerprintEnroll({
         <span className="px-2 py-1 rounded border bg-gray-50">
           Polling: {polling ? "ON" : "OFF"}
         </span>
-        {lastCmd && (
-          <span className="px-2 py-1 rounded border bg-gray-50">
-            Last command: {lastCmd.action || "—"}
-            {typeof lastCmd.pageId !== "undefined" ? ` (page ${lastCmd.pageId})` : ""}
-          </span>
-        )}
+{lastCmd && (
+  <span className="px-2 py-1 rounded border bg-gray-50">
+    Last command: {lastCmd.action || "—"}
+    {typeof lastCmd.pageId !== "undefined" ? ` (page ${lastCmd.pageId})` : ""}
+    {lastCmd.name ? ` — ${lastCmd.name}` : ""}
+  </span>
+)}
+
         {lastError && (
           <span className="px-2 py-1 rounded border bg-red-50 text-red-700">
             {lastError}
