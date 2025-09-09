@@ -6,6 +6,7 @@ import FingerprintEnroll from "../components/FingerprintEnroll.jsx";
 /* ===================== API BASE ===================== */
 const API_BASE =
   (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL?.replace(/\/$/, "")) ||
+  (typeof process !== "undefined" && process?.env?.REACT_APP_API_URL?.replace(/\/$/, "")) ||
   "https://teachflow-server.onrender.com/api";
 
 
@@ -680,67 +681,29 @@ export default function EditUser() {
               }}
               title="Identifier of the ESP32 at the scanner (e.g., scanner-001)"
             />
-
-  <button
-  type="button"
-  disabled={!id || fpPhase === "pending"}
-  onClick={async () => {
-    try {
-      setFpPhase("pending");
-      const req = await apiRequestEnroll(id);
-      setFpInfo({ pageId: req.pageId });
-
-      const start = Date.now();
-      const poll = async () => {
-        try {
-          const s = await apiCheckEnrollStatus(id);
-          if (s.status === "done") {
-            setFpPhase("done");
-            setFpInfo((p) => ({ ...(p || {}), ...s })); // فيه pageId و device_id أحيانًا
-
-            // ✅ 1) نضمن الكتابة (fallback آمن، حتى لو السيرفر كتب من /scan)
-            await persistFingerprintToUser(id, s.pageId || req.pageId, getFpDeviceId());
-
-            // ✅ 2) نعمل refresh للسجل حتى يبين pageId فورًا بالواجهة
-            await refreshUserIntoState(id, {
-              setFullName, setRole, setStatus, setPhoneLocal, setAddress,
-              setDob, setPlaceOfBirth, setGender, originalRef
-            });
-
-            return;
-          }
-          if (s.status === "failed") {
-            setFpPhase("failed");
-            setFpInfo((p) => ({ ...(p || {}), ...s }));
-            return;
-          }
-          if (Date.now() - start > 120000) {
-            setFpPhase("failed");
-            setFpInfo({ note: "Timeout" });
-            return;
-          }
-          setTimeout(poll, 2000);
-        } catch (e) {
-          setFpPhase("failed");
-          setFpInfo({ note: e.message });
-        }
-      };
-      setTimeout(poll, 1500);
-    } catch (e) {
-      setFpPhase("failed");
-      setFpInfo({ note: e.message });
+<section className="mb-8">
+  <FingerprintEnroll
+    userId={id}
+    initialPageId={originalRef.current?.fingerprint_page_id || null}
+    defaultDeviceId="scanner-001"
+  />
+</section>
+{fpPhase !== "idle" && (
+  <div
+    className={
+      "mt-2 text-sm rounded px-3 py-2 " +
+      (fpPhase === "done"
+        ? "bg-green-50 text-green-700 border border-green-200"
+        : fpPhase === "failed"
+        ? "bg-red-50 text-red-700 border border-red-200"
+        : "bg-blue-50 text-blue-700 border border-blue-200")
     }
-  }}
-  className={
-    "text-sm px-3 py-1.5 rounded-md border transition " +
-    (id
-      ? (fpPhase === "pending" ? "bg-yellow-500 text-white border-yellow-500" : "bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700")
-      : "bg-gray-200 text-gray-500 border-gray-200 cursor-not-allowed")
-  }
-  title={!id ? "Missing user id" : "Send enroll command to ESP32"}
->
-  {fpPhase === "pending" ? "Enrolling..." : "Add / Update Fingerprint"}
-</button>
+  >
+    {fpPhase === "pending" && "Command sent. Place the same finger twice…"}
+    {fpPhase === "done" && `Fingerprint saved ✅ (page ${fpInfo?.pageId ?? fpInfo?.page_id ?? "?"})`}
+    {fpPhase === "failed" && `Enrollment failed ❌ ${fpInfo?.note ? `— ${fpInfo.note}` : ""}`}
+  </div>
+)}
 
             <button
               type="button"
