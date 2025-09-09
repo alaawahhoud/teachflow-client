@@ -38,6 +38,22 @@ async function getEnrollStatus(user_id) {
   return j; // { status, pageId?, device_id?, note? }
 }
 
+// (اختياري) إلغاء طلب التسجيل المعلّق بالقوائم: باستعمال /api/enroll/result ok:false
+async function cancelPendingEnroll(pageId) {
+  if (!pageId) return false;
+  const headers = { "Content-Type": "application/json" };
+  const body = JSON.stringify({ pageId, ok: false });
+
+  // أولاً: مسار esp-compat
+  let r = await authFetch(`/enroll/result`, { method: "POST", headers, body });
+  if (r.status === 404) {
+    // تفرّع بديل إذا مركّب تحت /fingerprints
+    r = await authFetch(`/fingerprints/enroll/result`, { method: "POST", headers, body });
+  }
+  // حتى لو 200، ما ضروري يرجع JSON
+  return r.ok;
+}
+
 /* ======== Component ======== */
 export default function FingerprintEnroll({
   userId,
@@ -45,13 +61,28 @@ export default function FingerprintEnroll({
   defaultDeviceId = "scanner-001",
   onEnrolled, // callback(pageId)
 }) {
-  const [deviceId, setDeviceId] = useState(defaultDeviceId);
+  const [deviceId, setDeviceId] = useState(
+    localStorage.getItem("fp_device_id") || defaultDeviceId
+  );
   const [pageId, setPageId] = useState(initialPageId);
+
+  // UI state
   const [status, setStatus] = useState("idle"); // idle|requesting|waiting|done|failed
   const [msg, setMsg] = useState("");
-  const [polling, setPolling] = useState(false);
 
+  // Debug / connectivity
+  const [apiOk, setApiOk] = useState(null); // null|true|false
+  const [lastCmd, setLastCmd] = useState(null); // آخر رد من /api/command
+  const [lastError, setLastError] = useState("");
+
+  // polling
+  const [polling, setPolling] = useState(false);
   const pollTimer = useRef(null);
+
+  useEffect(() => {
+    // خزني الـ DeviceId للمرّة الجاية
+    localStorage.setItem("fp_device_id", String(deviceId || "scanner-001"));
+  }, [deviceId]);
 
   useEffect(() => {
     return () => {
@@ -65,6 +96,7 @@ export default function FingerprintEnroll({
     pollTimer.current = setInterval(async () => {
       try {
         const st = await getEnrollStatus(userId);
+        // console.log("enroll-status", st);
         if (st.status && st.status !== "pending") {
           clearInterval(pollTimer.current);
           pollTimer.current = null;
@@ -83,9 +115,17 @@ export default function FingerprintEnroll({
           setMsg("Waiting for device to finish…");
         }
       } catch (e) {
-        console.warn("poll error:", e?.message);
+        setLastError(e?.message || "polling error");
+        // خفّفي الإزعاج: خليه يحاول مرة الجاية
       }
-    }, 1200);
+    }, 1500);
+  };
+
+  const stopPolling = () => {
+    if (pollTimer.current) clearInterval(pollTimer.current);
+    pollTimer.current = null;
+    setPolling(false);
+    setStatus("idle");
   };
 
   const handleEnroll = async () => {
@@ -93,6 +133,7 @@ export default function FingerprintEnroll({
       if (!userId) return setMsg("Save the user first to get an ID.");
       setStatus("requesting");
       setMsg("");
+      setLastError("");
       const j = await postEnrollRequest(String(userId), deviceId);
       if (typeof j.pageId !== "undefined") setPageId(j.pageId);
       setStatus("waiting");
@@ -101,13 +142,44 @@ export default function FingerprintEnroll({
     } catch (e) {
       setStatus("failed");
       setMsg(e?.message || "Failed to request enrollment");
+      setLastError(e?.message || "enroll-request failed");
     }
   };
 
-  const stopPolling = () => {
-    if (pollTimer.current) clearInterval(pollTimer.current);
-    pollTimer.current = null;
-    setPolling(false);
+  // يفحص السيرفر ويرجّع آخر أمر ممكن يكون pending لهيدا الجهاز
+  const testConnection = async () => {
+    setLastError("");
+    setApiOk(null);
+    setLastCmd(null);
+    try {
+      const res = await authFetch(`/command?deviceId=${encodeURIComponent(deviceId)}`);
+      setApiOk(res.ok);
+      let j = {};
+      try { j = await res.json(); } catch {}
+      setLastCmd(j || {});
+      if (!res.ok) {
+        setLastError(`API ${res.status}`);
+      }
+    } catch (e) {
+      setApiOk(false);
+      setLastError(e?.message || "API unreachable");
+    }
+  };
+
+  // يلغي الطلب المعلق + يوقف البولّنغ
+  const handleCancel = async () => {
+    try {
+      const pid = pageId || (lastCmd && lastCmd.pageId) || null;
+      if (pid) {
+        await cancelPendingEnroll(pid);
+      }
+    } catch (e) {
+      // ما نوقفك لو فشل الإلغاء بالسيرفر
+      setLastError(e?.message || "cancel failed");
+    } finally {
+      stopPolling();
+      setMsg("Cancelled.");
+    }
   };
 
   return (
@@ -117,6 +189,28 @@ export default function FingerprintEnroll({
         <span className="text-xs text-gray-500">
           {pageId ? `Current page: #${pageId}` : "No fingerprint yet"}
         </span>
+      </div>
+
+      {/* Connection / debug strip */}
+      <div className="flex flex-wrap items-center gap-2 mb-3 text-xs">
+        <span className="px-2 py-1 rounded border bg-gray-50">
+          API:{" "}
+          {apiOk === null ? "—" : apiOk ? "Online ✅" : "Offline ❌"}
+        </span>
+        <span className="px-2 py-1 rounded border bg-gray-50">
+          Polling: {polling ? "ON" : "OFF"}
+        </span>
+        {lastCmd && (
+          <span className="px-2 py-1 rounded border bg-gray-50">
+            Last command: {lastCmd.action || "—"}
+            {typeof lastCmd.pageId !== "undefined" ? ` (page ${lastCmd.pageId})` : ""}
+          </span>
+        )}
+        {lastError && (
+          <span className="px-2 py-1 rounded border bg-red-50 text-red-700">
+            {lastError}
+          </span>
+        )}
       </div>
 
       <div className="grid md:grid-cols-3 gap-3 mb-3">
@@ -130,7 +224,7 @@ export default function FingerprintEnroll({
           />
         </div>
 
-        <div className="flex items-end">
+        <div className="flex items-end gap-2">
           <button
             type="button"
             onClick={handleEnroll}
@@ -144,6 +238,15 @@ export default function FingerprintEnroll({
             title="Send enroll command to the scanner"
           >
             {pageId ? "Re-enroll / Replace" : "Enroll fingerprint"}
+          </button>
+
+          <button
+            type="button"
+            onClick={testConnection}
+            className="px-3 py-2 rounded border hover:bg-gray-50"
+            title="Ping server command endpoint"
+          >
+            Test connection
           </button>
         </div>
       </div>
@@ -172,15 +275,14 @@ export default function FingerprintEnroll({
         >
           Refresh status
         </button>
-        {polling && (
-          <button
-            type="button"
-            onClick={stopPolling}
-            className="text-xs px-3 py-1.5 rounded border hover:bg-gray-50"
-          >
-            Stop polling
-          </button>
-        )}
+
+        <button
+          type="button"
+          onClick={handleCancel}
+          className="text-xs px-3 py-1.5 rounded border hover:bg-gray-50"
+        >
+          Cancel / Stop
+        </button>
       </div>
     </div>
   );
