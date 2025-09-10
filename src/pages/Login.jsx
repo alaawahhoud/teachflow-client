@@ -4,12 +4,12 @@ import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { FaEye, FaEyeSlash } from "react-icons/fa";
 
-// ✅ قاعدة الـ API: بتاخد من ENV وإلا بتستعمل /api (للـ rewrites)
 const API_BASE =
-  (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) ||
-  (typeof process !== "undefined" && process.env?.REACT_APP_API_URL) ||
-  "/api";
-
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL?.replace(/\/$/, "")) ||
+  (typeof window !== "undefined" && window.location.hostname.endsWith("vercel.app")
+    ? "https://teachflow-server.onrender.com/api"
+    : "http://localhost:4000/api");
+ 
 const Login = () => {
   const navigate = useNavigate();
 

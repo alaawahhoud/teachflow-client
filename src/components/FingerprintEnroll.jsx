@@ -2,9 +2,12 @@
 import React, { useEffect, useRef, useState } from "react";
 
 /* ======== API BASE + authFetch ======== */
+// استبدلي التعريف القديم بهالتعريف:
 const API_BASE =
   (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL?.replace(/\/$/, "")) ||
-  "https://teachflow-server.onrender.com/api";
+  (typeof window !== "undefined" && window.location.hostname.endsWith("vercel.app")
+    ? "https://teachflow-server.onrender.com/api"
+    : "http://localhost:4000/api");
 
 const authFetch = (url, opts = {}) => {
   const token = localStorage.getItem("token") || sessionStorage.getItem("token");

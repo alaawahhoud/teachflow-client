@@ -5,10 +5,12 @@ import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
 
+// استبدلي التعريف القديم بهالتعريف:
 const API_BASE =
-  (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) ||
-  process.env.REACT_APP_API_URL ||
-  "http://localhost:4000/api";
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL?.replace(/\/$/, "")) ||
+  (typeof window !== "undefined" && window.location.hostname.endsWith("vercel.app")
+    ? "https://teachflow-server.onrender.com/api"
+    : "http://localhost:4000/api");
 
 const getStatusColor = (status) => {
   switch (status) {

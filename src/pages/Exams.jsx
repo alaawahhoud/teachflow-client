@@ -7,10 +7,12 @@ import { motion } from "framer-motion";
 import { FaFilePdf, FaFileExcel, FaPlus } from "react-icons/fa";
 import { useNavigate } from "react-router-dom";
 
+// استبدلي التعريف القديم بهالتعريف:
 const API_BASE =
-  (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) ||
-  process.env.REACT_APP_API_URL ||
-  "http://localhost:4000/api";
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL?.replace(/\/$/, "")) ||
+  (typeof window !== "undefined" && window.location.hostname.endsWith("vercel.app")
+    ? "https://teachflow-server.onrender.com/api"
+    : "http://localhost:4000/api");
 
 /* UI helpers */
 const getStatusStyle = (status) => {

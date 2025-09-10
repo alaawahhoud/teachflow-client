@@ -4,10 +4,12 @@ import { useNavigate, useParams } from "react-router-dom";
 import { FaEye, FaEyeSlash } from "react-icons/fa";
 
 /* ===================== API BASE ===================== */
+// استبدلي التعريف القديم بهالتعريف:
 const API_BASE =
-  (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) ||
-  (typeof process !== "undefined" && process.env?.REACT_APP_API_URL) ||
-  "/api";
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL?.replace(/\/$/, "")) ||
+  (typeof window !== "undefined" && window.location.hostname.endsWith("vercel.app")
+    ? "https://teachflow-server.onrender.com/api"
+    : "http://localhost:4000/api");
 
 /* ===================== authFetch (يدعم tf_token) ===================== */
 const authFetch = (url, opts = {}) => {

@@ -3,10 +3,12 @@ import React, { useEffect, useMemo, useState } from "react";
 import FingerprintEnroll from "../components/FingerprintEnroll.jsx";
 
 /* ===================== API BASE ===================== */
+// استبدلي التعريف القديم بهالتعريف:
 const API_BASE =
-  (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_URL) ||
-  process.env.REACT_APP_API_URL ||
-  "http://localhost:4000/api";
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL?.replace(/\/$/, "")) ||
+  (typeof window !== "undefined" && window.location.hostname.endsWith("vercel.app")
+    ? "https://teachflow-server.onrender.com/api"
+    : "http://localhost:4000/api");
 
 /* ===================== Auth Fetch (cookies + optional JWT) ===================== */
 const authFetch = (url, opts = {}) => {

@@ -4,9 +4,13 @@ import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
 
 /* ===================== إعدادات عامة ===================== */
+// استبدلي التعريف القديم بهالتعريف:
 const API_BASE =
   (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL?.replace(/\/$/, "")) ||
-  "http://localhost:4000/api";
+  (typeof window !== "undefined" && window.location.hostname.endsWith("vercel.app")
+    ? "https://teachflow-server.onrender.com/api"
+    : "http://localhost:4000/api");
+
 
 // اختياري محلي فقط
 const LATE_AFTER = "07:40:00";
