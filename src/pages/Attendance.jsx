@@ -4,39 +4,36 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
 
-// ===== إعدادات عامة =====
+/* ===================== إعدادات عامة ===================== */
 const API_BASE =
   (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL?.replace(/\/$/, "")) ||
   "http://localhost:4000/api";
 
-// حد التأخير (HH:MM:SS)
+// حد التأخير (HH:MM:SS) — لم يعد ضروري للسيرفر، لكنه مفيد إن بدك تستخدمه لوكالي
 const LATE_AFTER = "07:40:00";
 
-// مقارنة وقت HH:MM:SS كسلسلة
+/* ===================== أدوات وقت/حالة ===================== */
 const isAfter = (t, cutoff) => {
   if (!t) return false;
   return t.localeCompare(cutoff) === 1; // t > cutoff
 };
 
-// يحسب الحالة من وقت الدخول
 const statusFromCheckIn = (checkIn) => {
   if (!checkIn) return "Absent";
   return isAfter(checkIn, LATE_AFTER) ? "Late" : "Present";
 };
 
-// لتوحيد بيانات السيرفر
+/* ===================== توحيد صفوف السيرفر ===================== */
 const normalizeRow = (r) => {
-  // توقع أشكال شائعة للحقول
   const id = r.user_id ?? r.teacher_id ?? r.id;
   const name = r.full_name ?? r.name ?? r.teacher_name ?? "";
   const cls = r.class_name ?? r.class ?? r.grade ?? "—";
   const subject = r.subject_name ?? r.subject ?? "—";
   const check_in = (r.check_in_time ?? r.check_in ?? r.in_time ?? "")?.slice(0, 8) || "";
   const check_out = (r.check_out_time ?? r.check_out ?? r.out_time ?? "")?.slice(0, 8) || "";
-  const note = r.note ?? r.reason ?? "";
-  const status = r.status
-    ? r.status // لو السيرفر راجع الحالة جاهزة من SQL
-    : statusFromCheckIn(check_in);
+  const note = r.note ?? r.notes ?? r.reason ?? "";
+
+  const status = r.status ? r.status : statusFromCheckIn(check_in);
 
   return {
     id,
@@ -58,40 +55,53 @@ const normalizeRow = (r) => {
 };
 
 const Attendance = () => {
+  /* ========== State للواجهة (بدون تغيير شكل) ========== */
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().substr(0, 10));
   const [selectedTeacher, setSelectedTeacher] = useState("All Teachers");
+  const [selectedClass, setSelectedClass] = useState("All Classes");
   const [statusFilters, setStatusFilters] = useState({ Present: true, Absent: true, Late: true });
   const [showExportOptions, setShowExportOptions] = useState(false);
   const exportRef = useRef(null);
 
-  // البيانات الفعلية من السيرفر
-  const [teachers, setTeachers] = useState([]); // مصفوفة صفوف اليوم (اسم، مادة، صف، حالة، ملاحظات...)
-  const [teachersMaster, setTeachersMaster] = useState([]); // لائحة أسماء المعلّمين للفلاتر
+  /* ========== بيانات من السيرفر ========== */
+  const [teachers, setTeachers] = useState([]);            // صفوف اليوم
+  const [teachersMaster, setTeachersMaster] = useState([]); // لائحة المعلّمين للفلاتر
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
-  // فلتر الحالة (واجهة فقط – السيرفر كمان بيستقبل)
+  /* ========== ألوان الحالة (بدون تغيير شكل) ========== */
+  const getStatusColor = (status) => {
+    const base = "rounded px-3 py-1 text-sm font-medium";
+    switch (status) {
+      case "Present": return `${base} bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300`;
+      case "Late":    return `${base} bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300`;
+      case "Absent":  return `${base} bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300`;
+      default:        return `${base} bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300`;
+    }
+  };
+
+  /* ========== الفلاتر المحلية (للعرض فقط) ========== */
   const toggleStatusFilter = (status) => {
     setStatusFilters((p) => ({ ...p, [status]: !p[status] }));
   };
 
-  // فلترة محليّة للحفاظ على الشكل الحالي (ومع ذلك نطلبها أيضاً من السيرفر)
   const filteredTeachers = useMemo(() => {
     return teachers.filter((s) => {
-      const matchesTeacher = selectedTeacher === "All Teachers" || s.name === selectedTeacher;
-      const matchesStatus = statusFilters[s.status];
-      return matchesTeacher && matchesStatus;
+      const matchTeacher = selectedTeacher === "All Teachers" || s.name === selectedTeacher;
+      const matchStatus = statusFilters[s.status];
+      const matchClass = selectedClass === "All Classes" || s.class === selectedClass;
+      return matchTeacher && matchStatus && matchClass;
     });
-  }, [teachers, selectedTeacher, statusFilters]);
+  }, [teachers, selectedTeacher, statusFilters, selectedClass]);
 
-  // حفظ (يبعت كل صف – لو بدك تحصرها بالمعدّل فقط، سهل نعدّل)
+  /* ========== حفظ الحضور ========== */
   const handleSaveAttendance = async () => {
     try {
       for (let s of teachers) {
         const body = {
           user_id: s.id,
           date: selectedDate,
-          status: s.status, // "Present" | "Late" | "Absent"
+          status: s.status,
           check_in_time: s.check_in_time || null,
           check_out_time: s.check_out_time || null,
           note: s.notes || null,
@@ -113,7 +123,7 @@ const Attendance = () => {
     }
   };
 
-  // تصدير PDF (نفس الشكل)
+  /* ========== تصدير PDF/Excel (بدون تغيير شكل) ========== */
   const handleExportPDF = () => {
     const doc = new jsPDF();
     doc.text("Attendance Report", 14, 16);
@@ -126,7 +136,6 @@ const Attendance = () => {
     setShowExportOptions(false);
   };
 
-  // تصدير Excel (نفس الشكل)
   const handleExportExcel = () => {
     const ws = XLSX.utils.json_to_sheet(
       filteredTeachers.map((s) => ({
@@ -143,12 +152,11 @@ const Attendance = () => {
     setShowExportOptions(false);
   };
 
-  // جلب قائمة المعلمين للفلاتر (اسم/id)
+  /* ========== جلب لائحة المعلّمين للفلاتر ========== */
   useEffect(() => {
     let ignore = false;
     (async () => {
       try {
-        // Endpoint مرن: جرّب الأكثر من واحد
         const endpoints = [
           `${API_BASE}/users?role=Teacher`,
           `${API_BASE}/users/teachers`,
@@ -165,6 +173,7 @@ const Attendance = () => {
               .map((t) => ({
                 id: t.id ?? t.user_id ?? t.teacher_id,
                 name: t.full_name ?? t.name ?? "",
+                class: t.class_name ?? t.class ?? t.grade ?? null,
               }))
               .filter((x) => x.id && x.name);
             if (mapped.length) {
@@ -177,12 +186,10 @@ const Attendance = () => {
         console.warn("teachers list failed", e);
       }
     })();
-    return () => {
-      ignore = true;
-    };
+    return () => { ignore = true; };
   }, []);
 
-  // جلب حضور اليوم مع الفلاتر – من السيرفر (تفعيل فلاتر DB)
+  /* ========== جلب حضور اليوم مع فلاتر DB (SQL) ========== */
   useEffect(() => {
     let ignore = false;
     (async () => {
@@ -192,52 +199,43 @@ const Attendance = () => {
         const params = new URLSearchParams();
         params.set("date", selectedDate);
 
-        // فلتر المعلّم (اختياري)
+        // فلتر الأستاذ
         if (selectedTeacher !== "All Teachers") {
           const t = teachersMaster.find((x) => x.name === selectedTeacher);
           if (t?.id) params.set("teacherId", String(t.id));
           else params.set("teacherName", selectedTeacher);
         }
 
-        // فلاتر الحالة – نرسلها للسيرفر ليستفيد منها بالـ SQL
+        // فلتر الصف (إن وجد جدول صفوف في DB)
+        if (selectedClass !== "All Classes") {
+          params.set("class", selectedClass);
+        }
+
+        // فلاتر الحالة
         const enabled = Object.entries(statusFilters)
           .filter(([, on]) => on)
           .map(([k]) => k);
         if (enabled.length && enabled.length < 3) {
-          // لو كله مفعّل بلا داعي نرسل
-          params.set("status", enabled.join(","));
+          params.set("status", enabled.join(",")); // مثال: Present,Late
         }
 
-        // نقاط نهاية مرنة
-        const urls = [
-          `${API_BASE}/attendance?${params.toString()}`,
-          `${API_BASE}/attendance/list?${params.toString()}`,
-          `${API_BASE}/attendance/by-date?${params.toString()}`,
-        ];
+        // الـ API الموحّد
+        const url = `${API_BASE}/attendance?${params.toString()}`;
+        const r = await fetch(url);
+        const j = await r.json().catch(() => ({}));
 
-        let data = null;
-        for (const u of urls) {
-          try {
-            const r = await fetch(u);
-            const j = await r.json().catch(() => ({}));
-            if (r.ok && (Array.isArray(j?.data) || Array.isArray(j))) {
-              data = Array.isArray(j?.data) ? j.data : j;
-              break;
-            }
-          } catch {}
-        }
+        let data = Array.isArray(j?.data) ? j.data : Array.isArray(j) ? j : [];
 
-        // إذا السيرفر ما رجّع شي، اعتبر الكل غياب بهاليوم (رؤوس أقلام من master)
+        // لو ما في بيانات راجعة، ابنِ صفوف افتراضية (غياب) من master
         let rows = [];
         if (Array.isArray(data) && data.length) {
           rows = data.map(normalizeRow);
         } else if (teachersMaster.length) {
-          // fallback: ابنِ صفوف من الأسامي فقط (Absent افتراضياً)
           rows = teachersMaster.map((t) =>
             normalizeRow({
               user_id: t.id,
               full_name: t.name,
-              class_name: "—",
+              class_name: t.class ?? "—",
               subject_name: "—",
               check_in_time: "",
               check_out_time: "",
@@ -257,9 +255,9 @@ const Attendance = () => {
         if (!ignore) setLoading(false);
       }
     })();
-    // كل ما تغيّر التاريخ / الأستاذ / الفلاتر، نعيد الجلب
-  }, [selectedDate, selectedTeacher, statusFilters, teachersMaster]);
+  }, [selectedDate, selectedTeacher, selectedClass, statusFilters, teachersMaster]);
 
+  /* ===================== واجهة (الشكل كما هو) ===================== */
   return (
     <div className="p-6 bg-[#F9FAFB] dark:bg-[#1F2937] min-h-screen text-gray-800 dark:text-white">
       <div className="flex justify-between items-center mb-6 flex-wrap gap-2">
@@ -280,11 +278,13 @@ const Attendance = () => {
 
         <div className="bg-white dark:bg-gray-800 rounded-xl shadow p-3">
           <label className="block text-sm font-medium mb-1 dark:text-white">Class</label>
-          <select className="w-full bg-gray-100 dark:bg-gray-700 dark:text-white rounded px-3 py-2">
+          <select
+            className="w-full bg-gray-100 dark:bg-gray-700 dark:text-white rounded px-3 py-2"
+            value={selectedClass}
+            onChange={(e) => setSelectedClass(e.target.value)}
+          >
             <option>All Classes</option>
-            {Array.from({ length: 12 }, (_, i) => (
-              <option key={i}>Grade {i + 1}</option>
-            ))}
+            {Array.from({ length: 12 }, (_, i) => <option key={i}>Grade {i + 1}</option>)}
             <option>KG1</option>
             <option>KG2</option>
             <option>KG3</option>
@@ -312,11 +312,7 @@ const Attendance = () => {
           <div className="flex gap-6 flex-wrap">
             {Object.keys(statusFilters).map((status) => (
               <label key={status} className="flex items-center gap-2 text-sm dark:text-white">
-                <input
-                  type="checkbox"
-                  checked={statusFilters[status]}
-                  onChange={() => toggleStatusFilter(status)}
-                />
+                <input type="checkbox" checked={statusFilters[status]} onChange={() => toggleStatusFilter(status)} />
                 {status}
               </label>
             ))}
@@ -347,25 +343,19 @@ const Attendance = () => {
           <tbody>
             {loading ? (
               <tr>
-                <td className="py-6 px-4 text-sm text-gray-500 dark:text-gray-300" colSpan={6}>
-                  Loading…
-                </td>
+                <td className="py-6 px-4 text-sm text-gray-500 dark:text-gray-300" colSpan={6}>Loading…</td>
               </tr>
             ) : err ? (
               <tr>
-                <td className="py-6 px-4 text-sm text-red-600" colSpan={6}>
-                  {err}
-                </td>
+                <td className="py-6 px-4 text-sm text-red-600" colSpan={6}>{err}</td>
               </tr>
             ) : (
               filteredTeachers.map((teacher, i) => (
                 <tr key={teacher.id ?? i} className="border-t dark:border-gray-600">
                   <td className="py-3 px-4">
-                    <div
-                      className={`w-10 h-10 rounded-full flex items-center justify-center font-semibold text-white ${
-                        i === 0 ? "bg-blue-500" : i === 1 ? "bg-green-500" : "bg-red-500"
-                      }`}
-                    >
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center font-semibold text-white ${
+                      i === 0 ? "bg-blue-500" : i === 1 ? "bg-green-500" : "bg-red-500"
+                    }`}>
                       {teacher.initials}
                     </div>
                   </td>
@@ -375,19 +365,7 @@ const Attendance = () => {
                   <td>
                     <select
                       value={teacher.status}
-                      className={(() => {
-                        const base = "rounded px-3 py-1 text-sm font-medium";
-                        switch (teacher.status) {
-                          case "Present":
-                            return `${base} bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300`;
-                          case "Late":
-                            return `${base} bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300`;
-                          case "Absent":
-                            return `${base} bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300`;
-                          default:
-                            return `${base} bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300`;
-                        }
-                      })()}
+                      className={getStatusColor(teacher.status)}
                       onChange={(e) => {
                         const v = e.target.value;
                         setTeachers((prev) =>
@@ -399,15 +377,13 @@ const Attendance = () => {
                       <option>Late</option>
                       <option>Absent</option>
                     </select>
-                    {/* عرض أوقات الدخول/الخروج (قراءة فقط) */}
-                    {teacher.check_in_time || teacher.check_out_time ? (
+
+                    {(teacher.check_in_time || teacher.check_out_time) && (
                       <div className="text-xs text-gray-500 dark:text-gray-300 mt-1">
                         {teacher.check_in_time && <span>In: {teacher.check_in_time}</span>}
-                        {teacher.check_out_time && (
-                          <span className="ml-2">Out: {teacher.check_out_time}</span>
-                        )}
+                        {teacher.check_out_time && <span className="ml-2">Out: {teacher.check_out_time}</span>}
                       </div>
-                    ) : null}
+                    )}
                   </td>
                   <td>
                     <div className="flex items-center gap-2 flex-wrap">
@@ -421,9 +397,7 @@ const Attendance = () => {
                         onChange={(e) => {
                           const v = e.target.value;
                           setTeachers((prev) =>
-                            prev.map((x) =>
-                              x.id === teacher.id ? { ...x, notes: v === "Other" ? "" : v } : x
-                            )
+                            prev.map((x) => (x.id === teacher.id ? { ...x, notes: v === "Other" ? "" : v } : x))
                           );
                         }}
                       >
@@ -433,6 +407,7 @@ const Attendance = () => {
                         <option value="Transportation Delay">Transportation Delay</option>
                         <option value="Other">Other</option>
                       </select>
+
                       {!["Sick", "Death in family", "Transportation Delay"].includes(teacher.notes) && (
                         <input
                           type="text"
